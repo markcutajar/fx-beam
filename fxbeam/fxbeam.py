@@ -36,8 +36,8 @@ class FxBeam:
 
     def __init__(
             self,
-            input_file,
-            output_file,
+            input_file_pattern,
+            output_file_pattern,
             window_size,
             pipeline_params,
             compression=None,
@@ -58,8 +58,8 @@ class FxBeam:
         self.window_size = window_size
 
         # Set IO
-        self.input_file = input_file
-        self.output_file = output_file
+        self.input_file_pattern = input_file_pattern
+        self.output_file_pattern = output_file_pattern
         self.compression = compression
         self.input_file_type = input_file_type
 
@@ -95,7 +95,7 @@ class FxBeam:
 
     def write(self, data):
         """Pipeline stage to write to file"""
-        data | 'Save output to file' >> WriteToText(self.output_file)
+        data | 'Save output to file' >> WriteToText(self.output_file_pattern)
 
     def read(self):
         """
@@ -118,7 +118,7 @@ class FxBeam:
         _compression = self.compression if self.compression else 'auto'
 
         rows = self.pipeline | 'Read data file' >> ReadFromText(
-            self.input_file,
+            self.input_file_pattern,
             compression_type=_compression
         )
 
