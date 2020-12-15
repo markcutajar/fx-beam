@@ -1,3 +1,4 @@
+import json
 import apache_beam as beam
 
 from apache_beam.io import WriteToText, ReadFromText
@@ -27,16 +28,25 @@ class FxBeam:
     format so as to be used in a stream processing pipeline.
 
     """
-
+    INPUT_FILE_TYPES = ['csv', 'json']
     OUTPUT_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
     TICK_DATA_HEADER = ['timestamp', 'ask', 'bid', 'volume']
     TICK_DATA_COLUMNS = ['ask', 'bid', 'volume']
     TICK_DATA_TIMESTAMP_FORMAT = '%Y%m%d %H%M%S%f'
 
     def __init__(
-            self, input_file, output_file, window_size,
-            pipeline_params, compression=None, save_main_session=False
+            self,
+            input_file,
+            output_file,
+            window_size,
+            pipeline_params,
+            compression=None,
+            save_main_session=False,
+            input_file_type='json',
     ):
+
+        if input_file_type not in self.INPUT_FILE_TYPES:
+            raise ValueError('Input file type not recognized')
 
         # We use the save_main_session option because one or more DoFn's in this
         # workflow rely on global context (e.g., a module imported at module level).
@@ -51,6 +61,7 @@ class FxBeam:
         self.input_file = input_file
         self.output_file = output_file
         self.compression = compression
+        self.input_file_type = input_file_type
 
         # Set Pipeline stages
         self.resampler = TickByTimeGroupResampler(self.window_size)
@@ -111,10 +122,13 @@ class FxBeam:
             compression_type=_compression
         )
 
-        rows = rows | 'Convert to tick objects' >> beam.ParDo(
-            ParseDataRows(),
-            headers=self.TICK_DATA_HEADER
-        )
+        if self.input_file_type == 'csv':
+            rows = rows | 'Convert CSV to tick elements' >> beam.ParDo(
+                ParseDataRows(),
+                headers=self.TICK_DATA_HEADER
+            )
+        else:
+            rows = rows | 'Convert JSON to tick elements' >> beam.Map(json.loads)
 
         rows = rows | 'Convert to timestamp field' >> beam.ParDo(
             ToTimestamp(),
