@@ -4,10 +4,11 @@ FXBeam is a data processing pipeline to process tick and OHLCV data.
 Main features of FXBeam:
 * Take in tick data in CSV and convert it to OHLCV data
 * Take in tick data in JSON and convert to OHLCV data
+* Take in tick data from different instruments and group per instrument
 * [FUTURE] Take in OHLCV in CSV and convert to OHLCV data with a different window
 * [FUTURE] Take in OHLCV in JSON and convert to OHLCV data with a different window
 * [FUTURE] Support streaming
-* [FUTURE] Support API format to not to save to file but be used in another pipeline
+* [FUTURE] Support API format to not save to file but be used in another pipeline
 
 Author: Mark Cutajar
 """
@@ -18,6 +19,7 @@ from fxbeam.fxbeam import FxBeam
 
 
 if __name__ == '__main__':
+
     logging.getLogger().setLevel(logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -47,6 +49,13 @@ if __name__ == '__main__':
         help='The type of input files. One of json or csv. '
              'If json is provided, this needs to be new line delimited')
 
+    parser.add_argument(
+        '--instrument-column', '-ic',
+        dest='instrument_column',
+        required=False,
+        default=None,
+        help='Column containing the instrument symbol if present')
+
     args = parser.parse_args()
     fx_beam = FxBeam(
         args.input,
@@ -56,6 +65,7 @@ if __name__ == '__main__':
         # WHEN running in an Apache Spark Cluster
         # pipeline_params=['--runner=PortableRunner', '--job_endpoint=localhost:8099'],
         compression=args.compression,
+        instrument_column=args.instrument_column,
         input_file_type=args.file_type
     )
     fx_beam.build()

@@ -5,7 +5,6 @@ from apache_beam.io import WriteToText, ReadFromText
 from apache_beam.options.pipeline_options import PipelineOptions, SetupOptions
 
 from fxbeam.resamplers.tick_resamplers import TickByTimeGroupResampler
-from fxbeam.schemas import TickDataWithTimestampSchema
 from fxbeam.utils.datatype_utils import ToFloat
 from fxbeam.utils.datetime_utils import ToTimestamp, AddTimestamp, ToReadable
 from fxbeam.utils.element_utils import SelectKeys
@@ -28,11 +27,10 @@ class FxBeam:
     format so as to be used in a stream processing pipeline.
 
     """
-    INPUT_FILE_TYPES = ['csv', 'json']
-    OUTPUT_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-    TICK_DATA_HEADER = ['timestamp', 'ask', 'bid', 'volume']
-    TICK_DATA_COLUMNS = ['ask', 'bid', 'volume']
     TICK_DATA_TIMESTAMP_FORMAT = '%Y%m%d %H%M%S%f'
+    BASE_OUTPUT_COLUMNS = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+    BASE_INPUT_COLUMNS = ['timestamp', 'ask', 'bid', 'volume']
+    INPUT_FILE_TYPES = ['csv', 'json']
 
     def __init__(
             self,
@@ -40,6 +38,7 @@ class FxBeam:
             output_file_pattern,
             window_size,
             pipeline_params,
+            instrument_column=None,
             compression=None,
             save_main_session=False,
             input_file_type='json',
@@ -62,9 +61,21 @@ class FxBeam:
         self.output_file_pattern = output_file_pattern
         self.compression = compression
         self.input_file_type = input_file_type
+        self.instrument_column = instrument_column
 
         # Set Pipeline stages
-        self.resampler = TickByTimeGroupResampler(self.window_size)
+        self.resampler = TickByTimeGroupResampler(
+            self.window_size,
+            instrument_column=instrument_column
+        )
+
+        # Set input and output columns
+        if not instrument_column:
+            self.input_columns = self.BASE_INPUT_COLUMNS
+            self.output_columns = self.BASE_OUTPUT_COLUMNS
+        else:
+            self.input_columns = self.BASE_INPUT_COLUMNS + [instrument_column]
+            self.output_columns = self.BASE_OUTPUT_COLUMNS + [instrument_column]
 
     def build(self):
         """Function to build the pipeline stages"""
@@ -80,7 +91,8 @@ class FxBeam:
     def extract_output(self, data):
         """Function to run before saving the file to disk.
         Currently it only converts the timestamp to a readable
-        format and selects keys defined in OUTPUT_COLUMNS.
+        format and selects keys defined in BASE_OUTPUT_COLUMNS
+        (or with added instrument column).
         """
         data = data | 'Add readable time' >> beam.ParDo(
             ToReadable(),
@@ -89,7 +101,7 @@ class FxBeam:
         )
         data = data | 'Select keys' >> beam.ParDo(
             SelectKeys(),
-            keys=self.OUTPUT_COLUMNS
+            keys=self.output_columns
         )
         return data
 
@@ -105,7 +117,8 @@ class FxBeam:
         The files are assumed to be a CSV string. However, only a few minor changes
         below have to be made so a JSON could be used.
 
-        1. Input data is read and split depending on TICK_DATA_HEADER class values.
+        1. Input data is read and split depending on BASE_INPUT_COLUMNS (or with added
+            instrument column) class values.
         2. The timestamp field is converted to an actual timestamp defending on format.
         3. The elements are assigned a window timestamp value. This is useful when using
             windows.
@@ -125,7 +138,7 @@ class FxBeam:
         if self.input_file_type == 'csv':
             rows = rows | 'Convert CSV to tick elements' >> beam.ParDo(
                 ParseDataRows(),
-                headers=self.TICK_DATA_HEADER
+                headers=self.input_columns
             )
         else:
             rows = rows | 'Convert JSON to tick elements' >> beam.Map(json.loads)
@@ -133,7 +146,7 @@ class FxBeam:
         rows = rows | 'Convert to timestamp field' >> beam.ParDo(
             ToTimestamp(),
             string_format=self.TICK_DATA_TIMESTAMP_FORMAT,
-            datetime_key=self.TICK_DATA_HEADER[0],
+            datetime_key=self.input_columns[0],
             timestamp_key='timestamp'
         )
 
@@ -144,7 +157,7 @@ class FxBeam:
 
         rows = rows | 'Convert to values to floats' >> beam.ParDo(
             ToFloat(),
-            fields=self.TICK_DATA_COLUMNS
-        ).with_output_types(TickDataWithTimestampSchema)
+            fields=self.BASE_INPUT_COLUMNS[1:]  # ALL EXCEPT TIMESTAMP AND INSTRUMENT
+        )
 
         return rows

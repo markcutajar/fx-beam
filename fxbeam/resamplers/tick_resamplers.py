@@ -11,8 +11,9 @@ class TickByTimeGroupResampler:
 
     The process function is the entry point to be used.
     """
-    def __init__(self, window_size):
+    def __init__(self, window_size, instrument_column=None):
         self.window_size = window_size
+        self.instrument_column = instrument_column
 
     def process(self, data):
         """Entry point to the resampler. This function
@@ -49,20 +50,43 @@ class TickByTimeGroupResampler:
             time_group_key='time_group_key'
         )
 
-    @classmethod
-    def resample(cls, data):
+    def map_elements(self, data):
+        """Map function to create key:value pairs to run CombinePerKey function.
+        :param data: PCollection being processed with time_group_key column and
+            instrument_column if set to use.
+        :return: PCollection with mapped data
+        """
+        action_name = 'Resampler - Map data'
+        if self.instrument_column:
+            return data | action_name >> beam.Map(
+                lambda x: ((x['time_group_key'], x[self.instrument_column]), x)
+            )
+        return data | action_name >> beam.Map(lambda x: (x['time_group_key'], x))
+
+    def demap_elements(self, data):
+        """De-Map function to unmap key:value pairs after CombinePerKey function.
+        :param data: PCollection being processed with (key: value) or
+            (key1, instrumentKey: value) format.
+        :return: PCollection with de-mapped data with keys added back into elements
+        """
+        action_name = 'Resampler - De-Map data'
+        if self.instrument_column:
+            return data | action_name >> beam.Map(
+                lambda x: {'time_group_key': x[0][0], self.instrument_column: x[0][1], **x[1]}
+            )
+        return data | 'Resampler - De-Map data' >> beam.Map(lambda x: {'time_group_key': x[0], **x[1]})
+
+    def resample(self, data):
         """Resample function which runs the TickToOHLCVCombiner.
         The map before and de-map after are done since the Combine
         per key expects a map of key: value elements.
         :param data: PCollection being processed
         :return: PCollection with OHLCV data but without timestamp
         """
-        return (
-            data |
-            'Resampler - Map data' >> beam.Map(lambda x: (x['time_group_key'], x)) |
-            'Resampler - Perform OHLCV' >> beam.CombinePerKey(TickToOHLCVCombiner()) |
-            'Resampler - De-Map data' >> beam.Map(lambda x: {'time_group_key': x[0], **x[1]})
-        )
+
+        data = self.map_elements(data)
+        data = data | 'Resampler - Perform OHLCV' >> beam.CombinePerKey(TickToOHLCVCombiner())
+        return self.demap_elements(data)
 
 
 class TickByWindowResampler:
@@ -71,8 +95,9 @@ class TickByWindowResampler:
 
     The process function is the entry point to be used.
     """
-    def __init__(self, window_size):
+    def __init__(self, window_size, instrument_column=None):
         self.window_size = window_size
+        self.instrument_column = instrument_column
 
     def process(self, data):
         """Entry point to the resampler. This function
@@ -107,8 +132,21 @@ class TickByWindowResampler:
             AddWindowStartTimestampToElement()
         )
 
-    @classmethod
-    def resample(cls, data):
+    def map_elements(self, data):
+        """Map function to create key:value pairs to run CombinePerKey function.
+        :param data: PCollection being processed with instrument_column if set to use.
+        :return: PCollection with mapped data
+        """
+        return data | 'Resampler - Map data' >> beam.Map(lambda x: (x[self.instrument_column], x))
+
+    def demap_elements(self, data):
+        """De-Map function to unmap key:value pairs after CombinePerKey function.
+        :param data: PCollection being processed with (instrumentKey: value)
+        :return: PCollection with de-mapped data with keys added back into elements
+        """
+        return data | 'Resampler - De-Map data' >> beam.Map(lambda x: {self.instrument_column: x[0], **x[1]})
+
+    def resample(self, data):
         """Resample function which runs the TickToOHLCVCombiner.
 
         The CombineGlobally function is used since we are not using
@@ -118,4 +156,10 @@ class TickByWindowResampler:
         :param data: PCollection being processed
         :return: PCollection with OHLCV data but without timestamp
         """
-        return data | 'Resample - Perform OHLCV' >> beam.CombineGlobally(TickToOHLCVCombiner())
+        action_name = 'Resampler - Perform OHLCV'
+        if self.instrument_column:
+            data = self.map_elements(data)
+            data = data | action_name >> beam.CombinePerKey(TickToOHLCVCombiner())
+            return self.demap_elements(data)
+
+        return data | action_name >> beam.CombineGlobally(TickToOHLCVCombiner())
